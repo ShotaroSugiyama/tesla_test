@@ -1,6 +1,6 @@
 require "./const"
 require "./polynomial_ring"
-require "./random_number_generator"
+require "./tesla"
 
 class Test
 
@@ -13,20 +13,25 @@ class Test
 			puts ""
 		end
 
+		def test_dwt
+			key = TESLA256.key_gen
+			poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
+
+			e1 = key[:e1]
+			e2 = key[:e2]
+			e3 = poly_ring.conv(e1, e2)
+			Test::print10(e3)
+			poly_ring.dwt!(e1)
+			poly_ring.dwt!(e2)
+			e3 = poly_ring.inner_prod(e1, e2)
+			poly_ring.idwt!(e3)
+			Test::print10(e3)
+		end
+
 	end
 
 end
 
 if __FILE__ == $0
-
-	Poly = PolynomialRing.new(q: Const::Q, n: Const::N)
-	a = Poly.uniform_sampling
-	b = Poly.uniform_sampling
-	c = Poly.conv(a, b)
-	Test::print10(c)
-	Poly.dwt(a)
-	Poly.dwt(b)
-	d = Poly.inner_prod(a, b)
-	Poly.idwt(d)
-	Test::print10(d)
+	Test.test_dwt
 end

@@ -1,16 +1,14 @@
-require "./random_number_generator"
-
 module Fp
 
 	def pow(base, exp, mod)
-    ans = 1
-    while exp > 0
-      ans = (ans * base) % mod if (exp & 1) == 1
-      exp >>= 1
-      base = base**2 % mod
-    end
-    ans
-  end
+		ans = 1
+		while exp > 0
+			ans = (ans * base) % mod if (exp & 1) == 1
+			exp >>= 1
+			base = base**2 % mod
+		end
+		ans
+	end
 
 	def primitive_root(q)
 		pr = 1
@@ -18,17 +16,28 @@ module Fp
 		while f == 1
 			f = 0
 			pr += 2
-			rem = q % pr
-			for i in 0..pr-1 do
-				if rem == i**2 % pr
-					f = 1
-				end
-			end
+			(0..pr-1).map { |i| f = 1 if i**2 == q % pr}
 		end
 		pr
 	end
 
-	module_function :pow, :primitive_root
+	def mod_mult_tesla256(a, b)
+		q = 2**28 - 2**16 + 1
+		a0 = a & 0x3fff
+		a1 = a >> 14
+		b0 = b & 0x3fff;
+		b1 = b >> 14;
+		a0b0 = a0*b0;
+		a1b1 = a1*b1;
+		middle = (a0 + a1)*(b0 + b1) % q
+		middle = (middle - a0b0 - a1b1) % q
+		a0 = (a0b0 + ((middle & 0x3fff) << 14) + (middle >> 14)*0xffff) % q
+		a0 = (a0 - a1b1) % q
+		a1 = (((a1b1 >> 12)*0xffff % q) + ((a1b1 & 0xfff) << 16) % q) % q
+		(a0 + a1) % q
+	end
+
+	module_function :pow, :primitive_root, :mod_mult_tesla256
 
 end
 
@@ -43,25 +52,18 @@ class PolynomialRing
 		@n_inv = pow(@n, @q-2, @q)
 		@stage = Math.log2(@n).to_i
 		@omega = [1, pow(@prim_root, (@q-1)/2/@n, @q)]
-		for i in 2..2*@n do
+		(2..2*@n).each do |i|
 			@omega += [@omega[i-1]*@omega[1] % @q]
 		end
 	end
 
-	def uniform_sampling
-		a = Array.new(@n)
-		a.map!{ |e| RNG::Generator.rand(@q) }
-	end
-
-	def dwt(poly)
-		for i in 0..@n-1 do
-			poly[i] = poly[i]*@omega[i] % @q
-		end
+	def dwt!(poly)
+		poly.map!.with_index { |e, i| e*@omega[i] % @q}
 		base = @n
-		for stage in 0..@stage-1 do
-			for i in 0..@n/base-1 do
+		(0..@stage-1).each do |stage|
+			(0..@n/base-1).each do |i|
 				offset = i*base;
-				for j in 0..base/2-1 do
+				(0..base/2-1).each do |j|
 					radix2_a = poly[offset+j]
 					radix2_b = poly[offset+j+base/2]
 					poly[offset+j] = (radix2_a + radix2_b) % @q
@@ -72,12 +74,12 @@ class PolynomialRing
 		end
 	end
 
-	def idwt(poly)
+	def idwt!(poly)
 		base = 2
-		for stage in 0..@stage-1 do
-			for i in 0..@n/base-1 do
+		(0..@stage-1).each do |stage|
+			(0..@n/base-1).each do |i|
 				offset = i*base;
-				for j in 0..base/2-1 do
+				(0..base/2-1).each do |j|
 					radix2_a = poly[offset+j]
 					radix2_b = poly[offset+j+base/2] * @omega[2*@n-j*2*@n/base] % @q
 					poly[offset+j] = (radix2_a + radix2_b) % @q
@@ -86,31 +88,31 @@ class PolynomialRing
 			end
 			base *= 2
 		end
-		for i in 0..@n-1 do
-			poly[i] = poly[i]*@n_inv*@omega[2*@n-i] % @q
-		end
+		poly.map!.with_index { |e, i| e*@n_inv*@omega[2*@n-i] % @q}
 	end
 
 	def conv(a, b)
 		c = Array.new(@n, 0)
-		for i in 0..@n-1 do
-			for j in 0..@n-1 do
-				if i + j >= @n
-					c[i+j-@n] = (c[i+j-@n] - a[i]*b[j]) % @q
-				else
-					c[i+j] = (c[i+j] + a[i]*b[j]) % @q
-				end
+		(0..@n-1).to_a.repeated_permutation(2) do |i, j|
+			if i + j >= @n
+				c[i+j-@n] = (c[i+j-@n] - a[i]*b[j]) % @q
+			else
+				c[i+j] = (c[i+j] + a[i]*b[j]) % @q
 			end
 		end
 		c
 	end
 
+  def add(a, b)
+		a.map.with_index { |e, i| (e + b[i]) % @q}
+  end
+
+  def sub(a, b)
+		a.map.with_index { |e, i| (e - b[i]) % @q}
+  end
+
 	def inner_prod(a, b)
-		c = Array.new(@n)
-		for i in 0..@n-1 do
-			c[i] = a[i]*b[i] % @q
-		end
-		c
+		a.map.with_index { |e, i| (e * b[i]) % @q}
 	end
 
 end
