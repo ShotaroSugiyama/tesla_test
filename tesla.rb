@@ -86,6 +86,7 @@ module TESLAFunctions
       shift[3*i+1] = (sig_c[i] >> 10) & 0x3ff;
       shift[3*i+2] = (sig_c[i] >> 20) & 0x3ff;
     end
+    """
     (0..4).each do |i|
       shift[48] += (sig_c[i] >> (30 - 2*i)) & (0x3 << 2*i);
       shift[49] += (sig_c[i+5] >> (30 - 2*i)) & (0x3 << 2*i);
@@ -110,6 +111,7 @@ module TESLAFunctions
     } else {
       return 0;
     }
+    """
   end
 
   module_function :uniform_sampling, :bounded_sampling, \
