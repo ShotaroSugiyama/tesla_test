@@ -128,17 +128,12 @@ class TESLA256
         a += (chacha.update).map { |e| e % Const::Q }
       end
 
-      poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
-      s = poly_ring.dwt(key[:s])
-      a1 = poly_ring.dwt(a[0..Const::N-1])
-      a2 = poly_ring.dwt(a[Const::N..-1])
-      t1 = poly_ring.inner_prod(s, a1)
-      t2 = poly_ring.inner_prod(s, a2)
-      poly_ring.idwt!(t1)
-      poly_ring.idwt!(t2)
-      key[:t1] = poly_ring.add(t1, key[:e1])
-      key[:t2] = poly_ring.add(t2, key[:e2])
-
+      p_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
+      s = p_ring.dwt(key[:s])
+      a1 = p_ring.dwt(a[0..Const::N-1])
+      a2 = p_ring.dwt(a[Const::N..-1])
+      key[:t1] = p_ring.add(p_ring.idwt(p_ring.inner_prod(s, a1)), key[:e1])
+      key[:t2] = p_ring.add(p_ring.idwt(p_ring.inner_prod(s, a2)), key[:e2])
       key
     end
 
@@ -152,36 +147,36 @@ class TESLA256
         a += (chacha.update).map { |e| e % Const::Q }
       end
 
-      poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
-      a1 = poly_ring.dwt(a[0..Const::N-1])
-      a2 = poly_ring.dwt(a[Const::N..-1])
+      p_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
+      a1 = p_ring.dwt(a[0..Const::N-1])
+      a2 = p_ring.dwt(a[Const::N..-1])
 
-      s = poly_ring.dwt(key[:s])
-      e1 = poly_ring.dwt(key[:e1])
-      e2 = poly_ring.dwt(key[:e2])
+      s = p_ring.dwt(key[:s])
+      e1 = p_ring.dwt(key[:e1])
+      e2 = p_ring.dwt(key[:e2])
 
       loop do
-        r = poly_ring.dwt(bounded_sampling)
+        r = p_ring.dwt(bounded_sampling)
 
-        v1 = poly_ring.inner_prod(a1, r)
-        v2 = poly_ring.inner_prod(a2, r)
-        v1_d = d_rounding(poly_ring.idwt(v1))
-        v2_d = d_rounding(poly_ring.idwt(v2))
+        v1 = p_ring.inner_prod(a1, r)
+        v2 = p_ring.inner_prod(a2, r)
+        v1_d = d_rounding(p_ring.idwt(v1))
+        v2_d = d_rounding(p_ring.idwt(v2))
 
         sig_c = hash512(v1_d, v2_d, message)
         c = hash_f(sig_c)
         next if c.count(1) != Const::Omega
 
-        c = poly_ring.dwt(c)
-        sig_z = poly_ring.add(r, poly_ring.inner_prod(s, c))
-        sig_z = poly_ring.idwt(sig_z)
+        c = p_ring.dwt(c)
+        sig_z = p_ring.add(r, p_ring.inner_prod(s, c))
+        sig_z = p_ring.idwt(sig_z)
         next if sig_z.max_by { |n| [n, Const::Q - n].min } > (Const::B - Const::U)
 
-        w1 = poly_ring.sub(v1, poly_ring.inner_prod(e1, c))
-        next if d_rounding(poly_ring.idwt(w1)) != v1_d
+        w1 = p_ring.sub(v1, p_ring.inner_prod(e1, c))
+        next if d_rounding(p_ring.idwt(w1)) != v1_d
 
-        w2 = poly_ring.sub(v2, poly_ring.inner_prod(e2, c))
-        next if d_rounding(poly_ring.idwt(w2)) != v2_d
+        w2 = p_ring.sub(v2, p_ring.inner_prod(e2, c))
+        next if d_rounding(p_ring.idwt(w2)) != v2_d
 
         signature[:c] = sig_c
         signature[:z] = sig_z
@@ -201,21 +196,21 @@ class TESLA256
         a += (chacha.update).map { |e| e % Const::Q }
       end
 
-      poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
-      a1 = poly_ring.dwt(a[0..Const::N-1])
-      a2 = poly_ring.dwt(a[Const::N..-1])
+      p_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
+      a1 = p_ring.dwt(a[0..Const::N-1])
+      a2 = p_ring.dwt(a[Const::N..-1])
 
       c = hash_f(signature[:c])
 
-      c = poly_ring.dwt(c)
-      z = poly_ring.dwt(signature[:z])
-      t1 = poly_ring.dwt(key[:t1])
-      t2 = poly_ring.dwt(key[:t2])
+      c = p_ring.dwt(c)
+      z = p_ring.dwt(signature[:z])
+      t1 = p_ring.dwt(key[:t1])
+      t2 = p_ring.dwt(key[:t2])
 
-      w1 = poly_ring.sub(poly_ring.inner_prod(a1, z), poly_ring.inner_prod(t1, c))
-      w2 = poly_ring.sub(poly_ring.inner_prod(a2, z), poly_ring.inner_prod(t2, c))
-      w1 = poly_ring.idwt(w1)
-      w2 = poly_ring.idwt(w2)
+      w1 = p_ring.sub(p_ring.inner_prod(a1, z), p_ring.inner_prod(t1, c))
+      w2 = p_ring.sub(p_ring.inner_prod(a2, z), p_ring.inner_prod(t2, c))
+      w1 = p_ring.idwt(w1)
+      w2 = p_ring.idwt(w2)
 
       c_pr = hash512(d_rounding(w1), d_rounding(w2), message)
 
