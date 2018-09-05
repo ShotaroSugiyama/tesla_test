@@ -49,8 +49,8 @@ module TESLAFunctions
   Generator = Random.new(0)
 
   def uniform_sampling
-		(0..Const::N-1).map { |i| Generator.rand(Const::Q) }
-	end
+    (0..Const::N-1).map { |i| Generator.rand(Const::Q) }
+  end
 
   def bounded_sampling
     (0..Const::N-1).map { |i|  Generator.rand(-Const::B..Const::B) % Const::Q}
@@ -80,38 +80,28 @@ module TESLAFunctions
   end
 
   def hash_f(sig_c)
-    shift = Array.new(Const::OmegaPr)
+    shift = Array.new(Const::OmegaPr, 0)
     (0..15).each do |i|
-      shift[3*i] = sig_c[i] & 0x3ff;
-      shift[3*i+1] = (sig_c[i] >> 10) & 0x3ff;
-      shift[3*i+2] = (sig_c[i] >> 20) & 0x3ff;
+      shift[3*i] = sig_c[i] & 0x3ff
+      shift[3*i+1] = (sig_c[i] >> 10) & 0x3ff
+      shift[3*i+2] = (sig_c[i] >> 20) & 0x3ff
     end
-    """
     (0..4).each do |i|
-      shift[48] += (sig_c[i] >> (30 - 2*i)) & (0x3 << 2*i);
-      shift[49] += (sig_c[i+5] >> (30 - 2*i)) & (0x3 << 2*i);
-      shift[50] += (sig_c[i+10] >> (30 - 2*i)) & (0x3 << 2*i);
+      shift[48] += (sig_c[i] >> (30 - 2*i)) & (0x3 << 2*i)
+      shift[49] += (sig_c[i+5] >> (30 - 2*i)) & (0x3 << 2*i)
+      shift[50] += (sig_c[i+10] >> (30 - 2*i)) & (0x3 << 2*i)
     end
 
-    uint32_t count = 0;
-    for (i = 0; i < params.omega_pr; i++) {
-      if(fc[shift[i]] == 0) {
-        fc[shift[i]] = 1;
-        count++;
-      }
-      if(count == params.omega) {
-        break;
-      }
-    }
-
-    free(shift);
-
-    if (count != params.omega) {
-      return 1;
-    } else {
-      return 0;
-    }
-    """
+    count = 0
+    f_digest = Array.new(Const::N, 0)
+    (0..Const::OmegaPr-1).each do |i|
+      if f_digest[shift[i]] == 0
+        f_digest[shift[i]] = 1
+        count += 1
+      end
+      break if count == Const::Omega
+    end
+    f_digest
   end
 
   module_function :uniform_sampling, :bounded_sampling, \
@@ -131,58 +121,109 @@ class TESLA256
       key[:e2] = gaussian_sampling
 
       key[:seed] = (0..7).map { |e| Generator.rand(2**32) }
-      a1 = []
-      a2 = []
+      a = []
       chacha = ChaCha.new(key[:seed])
-      (0..Const::N/16-1).each do |i|
-        a1 += (chacha.update).map { |e| e % Const::Q }
-        a2 += (chacha.update).map { |e| e % Const::Q }
+      # Concat
+      (0..2*Const::N/16-1).each do |i|
+        a += (chacha.update).map { |e| e % Const::Q }
       end
 
-      s = key[:s].map { |e| e }
       poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
-      poly_ring.dwt!(s)
-      poly_ring.dwt!(a1)
-      poly_ring.dwt!(a2)
+      s = poly_ring.dwt(key[:s])
+      a1 = poly_ring.dwt(a[0..Const::N-1])
+      a2 = poly_ring.dwt(a[Const::N..-1])
       t1 = poly_ring.inner_prod(s, a1)
       t2 = poly_ring.inner_prod(s, a2)
       poly_ring.idwt!(t1)
       poly_ring.idwt!(t2)
       key[:t1] = poly_ring.add(t1, key[:e1])
-      key[:t2] = poly_ring.add(t1, key[:e2])
+      key[:t2] = poly_ring.add(t2, key[:e2])
 
       key
     end
 
     def sign(key, message)
-      key[:seed] = (0..7).map { |e| Generator.rand(2**32) }
-      a1 = []
-      a2 = []
+      signature = {c:[], z:[]}
+
+      a = []
       chacha = ChaCha.new(key[:seed])
-      (0..Const::N/16-1).each do |i|
-        a1 += (chacha.update).map { |e| e % Const::Q }
-        a2 += (chacha.update).map { |e| e % Const::Q }
+      # Concat
+      (0..2*Const::N/16-1).each do |i|
+        a += (chacha.update).map { |e| e % Const::Q }
       end
 
       poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
-      poly_ring.dwt!(a1)
-      poly_ring.dwt!(a2)
+      a1 = poly_ring.dwt(a[0..Const::N-1])
+      a2 = poly_ring.dwt(a[Const::N..-1])
 
-      while true
-        r = bounded_sampling
-        poly_ring.dwt!(r)
+      s = poly_ring.dwt(key[:s])
+      e1 = poly_ring.dwt(key[:e1])
+      e2 = poly_ring.dwt(key[:e2])
+
+      loop do
+        r = poly_ring.dwt(bounded_sampling)
 
         v1 = poly_ring.inner_prod(a1, r)
         v2 = poly_ring.inner_prod(a2, r)
+        v1_d = d_rounding(poly_ring.idwt(v1))
+        v2_d = d_rounding(poly_ring.idwt(v2))
+
+        sig_c = hash512(v1_d, v2_d, message)
+        c = hash_f(sig_c)
+        next if c.count(1) != Const::Omega
+
+        c = poly_ring.dwt(c)
+        sig_z = poly_ring.add(r, poly_ring.inner_prod(s, c))
+        sig_z = poly_ring.idwt(sig_z)
+        next if sig_z.max_by { |n| [n, Const::Q - n].min } > (Const::B - Const::U)
+
+        w1 = poly_ring.sub(v1, poly_ring.inner_prod(e1, c))
+        next if d_rounding(poly_ring.idwt(w1)) != v1_d
+
+        w2 = poly_ring.sub(v2, poly_ring.inner_prod(e2, c))
+        next if d_rounding(poly_ring.idwt(w2)) != v2_d
+
+        signature[:c] = sig_c
+        signature[:z] = sig_z
 
         break
-
       end
+      signature
     end
 
-    def verify(key, message)
+    def verify(key, signature, message)
+      output = 1
 
+      a = []
+      chacha = ChaCha.new(key[:seed])
+      # Concat
+      (0..2*Const::N/16-1).each do |i|
+        a += (chacha.update).map { |e| e % Const::Q }
+      end
+
+      poly_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
+      a1 = poly_ring.dwt(a[0..Const::N-1])
+      a2 = poly_ring.dwt(a[Const::N..-1])
+
+      c = hash_f(signature[:c])
+
+      c = poly_ring.dwt(c)
+      z = poly_ring.dwt(signature[:z])
+      t1 = poly_ring.dwt(key[:t1])
+      t2 = poly_ring.dwt(key[:t2])
+
+      w1 = poly_ring.sub(poly_ring.inner_prod(a1, z), poly_ring.inner_prod(t1, c))
+      w2 = poly_ring.sub(poly_ring.inner_prod(a2, z), poly_ring.inner_prod(t2, c))
+      w1 = poly_ring.idwt(w1)
+      w2 = poly_ring.idwt(w2)
+
+      c_pr = hash512(d_rounding(w1), d_rounding(w2), message)
+
+      output = 0 if signature[:c] != c_pr
+      output = 0 if signature[:z].max_by { |n| [n, Const::Q - n].min } > (Const::B - Const::U)
+      output
     end
+
   end
 
 end
