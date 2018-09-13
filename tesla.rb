@@ -68,7 +68,7 @@ module TESLAFunctions
 
   def d_rounding(v)
     v.map do |e|
-      tmp = e % 2**(32-Const::D)
+      tmp = e % 2**Const::D
       tmp -= 2**Const::D if tmp > 2**(Const::D-1)
       (e - tmp) >> Const::D
     end
@@ -171,7 +171,8 @@ class TESLA256
         c = p_ring.dwt(c)
         sig_z = p_ring.add(r, p_ring.inner_prod(s, c))
         sig_z = p_ring.idwt(sig_z)
-        next if sig_z.max_by { |n| [n, Const::Q - n].min } > (Const::B - Const::U)
+        lp_inf = signature[:z].max_by { |n| [n, Const::Q - n].min }
+        next if [lp_inf, Const::Q - lp_inf].min > (Const::B - Const::U)
 
         w1 = p_ring.sub(v1, p_ring.inner_prod(e1, c))
         next if d_rounding(p_ring.idwt(w1)) != v1_d
@@ -214,9 +215,9 @@ class TESLA256
       w2 = p_ring.idwt(w2)
 
       c_pr = hash512(d_rounding(w1), d_rounding(w2), message)
-
       output = 0 if signature[:c] != c_pr
-      output = 0 if signature[:z].max_by { |n| [n, Const::Q - n].min } > (Const::B - Const::U)
+      lp_inf = signature[:z].max_by { |n| [n, Const::Q - n].min }
+      output = 0 if [lp_inf, Const::Q - lp_inf].min > (Const::B - Const::U)
       output
     end
 
