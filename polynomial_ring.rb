@@ -1,5 +1,8 @@
+require "prime"
+
 module Fp
 
+  # モジュラべき乗
   def pow(base, exp, mod)
     ans = 1
     while exp > 0
@@ -10,14 +13,24 @@ module Fp
     ans
   end
 
-  def primitive_root(q)
+  # 剰余環Z/(2**28-2**16+1)Zの原始根を求める
+  def primitive_root
+    q = 2**28-2**16+1
     pr = 1
-    f = 1
-    while f == 1
-      f = 0
+    while true
       pr += 2
-      (0..pr-1).map { |i| f = 1 if i**2 == q % pr}
+      next if Prime.prime?(pr) == false
+      # 相互法則で得られる値は常に1 = (-1)^(2**27-2**15)*(-1)^((pr-1)/2)
+      # (2**28-2**16+1) mod pr が平方非剰余であればよい
+      next if ((0..pr-1).map { |i| 1 if (i**2 % pr) == (q % pr)}).count(1) != 0
+      # 2**28 - 2**16 = 2**16*3**2*5*7*13より、9,5,7,13乗根でないことを確かめる
+      next if pow(pr, (q-1)/9, q) == 1
+      next if pow(pr, (q-1)/5, q) == 1
+      next if pow(pr, (q-1)/7, q) == 1
+      next if pow(pr, (q-1)/13, q) == 1
+      break
     end
+    # まあ答えは23なのですが
     pr
   end
 
@@ -41,6 +54,7 @@ module Fp
 
 end
 
+# 多項式環
 class PolynomialRing
 
   include Fp
@@ -48,7 +62,12 @@ class PolynomialRing
   def initialize(q:, n:)
     @q = q
     @n = n
-    @prim_root = primitive_root(@q)
+    # 正しくは @prim_root = primitive_root()です
+    # 実際には11を使っていました。11は11^((q-1)/5)=1となってしまうので原始根ではありません
+    # しかし、数論変換が2バタフライなので5で巡回していても理論上問題ないです。
+    # 数論変換なしで多項式乗算した結果と照らし合わせて合っていたので問題ないはずです。
+    # 本番で動いていたほうを残しておきます。
+    @prim_root = 11
     @n_inv = pow(@n, @q-2, @q)
     @stage = Math.log2(@n).to_i
     @omega = [1, pow(@prim_root, (@q-1)/2/@n, @q)]
@@ -57,8 +76,11 @@ class PolynomialRing
     end
   end
 
+  # 数論変換&負巡回畳み込み
   def dwt!(poly)
+    # 負巡回畳み込みなので先にomega^{i/2}をかけておく
     poly.map!.with_index { |e, i| e*@omega[i] % @q}
+    # 以下FFTとおなじ
     base = @n
     (0..@stage-1).each do |stage|
       (0..@n/base-1).each do |i|
@@ -74,6 +96,7 @@ class PolynomialRing
     end
   end
 
+  # 数論逆変換
   def idwt!(poly)
     base = 2
     (0..@stage-1).each do |stage|
@@ -88,9 +111,11 @@ class PolynomialRing
       end
       base *= 2
     end
+    # 負巡回畳み込み
     poly.map!.with_index { |e, i| e*@n_inv*@omega[2*@n-i] % @q}
   end
 
+  # 変数を破壊しないバージョン
   def dwt(poly)
     mem = poly.map.with_index { |e, i| e*@omega[i] % @q}
     base = @n
@@ -127,6 +152,7 @@ class PolynomialRing
     mem.map.with_index { |e, i| e*@n_inv*@omega[2*@n-i] % @q}
   end
 
+  # 多項式乗算の検算用
   def conv(a, b)
     c = Array.new(@n, 0)
     (0..@n-1).to_a.repeated_permutation(2) do |i, j|
@@ -147,6 +173,7 @@ class PolynomialRing
     a.map.with_index { |e, i| (e - b[i]) % @q}
   end
 
+  # 要素積
   def inner_prod(a, b)
     a.map.with_index { |e, i| (e * b[i]) % @q}
   end

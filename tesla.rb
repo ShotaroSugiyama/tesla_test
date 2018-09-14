@@ -2,6 +2,8 @@ require "./const"
 require "./polynomial_ring"
 require "digest/sha2"
 
+# ChaChaはseedから(a1, a2)を生成するためのPRNG
+# http://www.cryptrec.go.jp/exreport/cryptrec-ex-2702-2017.pdfを参照した
 class ChaCha
 
   def initialize(seed)
@@ -49,14 +51,19 @@ module TESLAFunctions
 
   Generator = Random.new(0)
 
+  # [0, q)の範囲で一様な乱数を係数にもつ多項式を生成する
   def uniform_sampling
     (0..Const::N-1).map { |i| Generator.rand(Const::Q) }
   end
 
+  # 係数の絶対値がB以下である一様でランダムな多項式を生成する
+  # 最終的にmod qされる
   def bounded_sampling
     (0..Const::N-1).map { |i|  Generator.rand(-Const::B..Const::B) % Const::Q}
   end
 
+  # 平均０のガウス分布に従う整数係数をもつ多項式を生成する
+  # 最終的にmod qされる
   def gaussian_sampling
     (0..Const::N-1).map do |i|
       x = Generator.rand
@@ -66,6 +73,7 @@ module TESLAFunctions
     end
   end
 
+  # 論文 section 2.1 のrounding operation
   def d_rounding(v)
     v.map do |e|
       tmp = e % 2**Const::D
@@ -80,7 +88,11 @@ module TESLAFunctions
     d.map { |e| e.hex }
   end
 
+  # SHA512のダイジェストが入力
+  # 1024次多項式で、Omega個の係数だけが1、それ以外が0となるものを出力する
+  # 参照論文アルゴリズムのF(c)
   def hash_f(sig_c)
+    # 512bitを10bit*51個に分ける
     shift = Array.new(Const::OmegaPr, 0)
     (0..15).each do |i|
       shift[3*i] = sig_c[i] & 0x3ff
@@ -93,6 +105,9 @@ module TESLAFunctions
       shift[50] += (sig_c[i+10] >> (30 - 2*i)) & (0x3 << 2*i)
     end
 
+    # 10bitの数の表す箇所に1をセットする。
+    # omega個1が立ったら終了
+    # ダブりがあってomega個立たなくてもdigestを返す。呼び出し元で失敗を判定する。
     count = 0
     f_digest = Array.new(Const::N, 0)
     (0..Const::OmegaPr-1).each do |i|
@@ -124,11 +139,12 @@ class TESLA256
       key[:seed] = (0..7).map { |e| Generator.rand(2**32) }
       a = []
       chacha = ChaCha.new(key[:seed])
-      # Concat
+      # a = (a1, a2)をchachaにより生成する。
       (0..2*Const::N/16-1).each do |i|
         a += (chacha.update).map { |e| e % Const::Q }
       end
 
+      # 多項式環の定義
       p_ring = PolynomialRing.new(q: Const::Q, n: Const::N)
       s = p_ring.dwt(key[:s])
       a1 = p_ring.dwt(a[0..Const::N-1])
@@ -143,7 +159,6 @@ class TESLA256
 
       a = []
       chacha = ChaCha.new(key[:seed])
-      # Concat
       (0..2*Const::N/16-1).each do |i|
         a += (chacha.update).map { |e| e % Const::Q }
       end
@@ -166,12 +181,16 @@ class TESLA256
 
         sig_c = hash512(v1_d, v2_d, message)
         c = hash_f(sig_c)
+
+        # F(c)の計算に失敗した場合やりなおし
         next if c.count(1) != Const::Omega
 
         c = p_ring.dwt(c)
         sig_z = p_ring.add(r, p_ring.inner_prod(s, c))
         sig_z = p_ring.idwt(sig_z)
-        lp_inf = signature[:z].max_by { |n| [n, Const::Q - n].min }
+
+        # 署名zの中で絶対値の最も大きい係数がupper boundを超えていたらやりなおし
+        lp_inf = sig_z.max_by { |n| [n, Const::Q - n].min }
         next if [lp_inf, Const::Q - lp_inf].min > (Const::B - Const::U)
 
         w1 = p_ring.sub(v1, p_ring.inner_prod(e1, c))
@@ -193,7 +212,6 @@ class TESLA256
 
       a = []
       chacha = ChaCha.new(key[:seed])
-      # Concat
       (0..2*Const::N/16-1).each do |i|
         a += (chacha.update).map { |e| e % Const::Q }
       end

@@ -1,3 +1,4 @@
+# TESLA-IIのパラメータ
 module Const
   N = 1024
   Q = 2**28 - 2**16 + 1
